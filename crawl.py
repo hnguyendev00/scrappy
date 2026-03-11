@@ -6,9 +6,10 @@ import aiohttp
 
 def normalize_url(url):
     parsed_url = urlparse(url)
-    full_path = f"{parsed_url.netloc}{parsed_url.path}"
-    full_path = full_path.rstrip("/")
-    return full_path.lower()
+    full_url = f"{parsed_url.netloc}{parsed_url.path}"
+    if parsed_url.query:
+        full_url += f"?{parsed_url.query}"
+    return full_url.rstrip("/").lower()
 
 
 def get_heading_from_html(html):
@@ -96,14 +97,13 @@ def extract_flight_table(html, page_url):
 
     column_header_row = header_rows[1]
     header_cells = column_header_row.find_all("th")
-    headers = [cell.get_text(" ", strip=True).replace("Estimated Arrival Time", "Estimated Arrival Time")
-               for cell in header_cells]
+    headers = [cell.get_text(" ", strip=True) for cell in header_cells]
 
     rows = []
-    body_rows = table.find_all("tr")
+    tbody = table.find("tbody")
+    body_rows = tbody.find_all("tr") if tbody else table.find_all("tr")[2:]
 
-    # skip the 2 thead rows
-    for tr in body_rows[2:]:
+    for tr in body_rows:
         cells = tr.find_all("td")
         if not cells:
             continue
@@ -176,7 +176,14 @@ class AsyncCrawler:
     async def get_html(self, url):
         try:
             async with self.session.get(
-                url, headers={"User-Agent": "BootCrawler/1.0"}
+                url,
+                headers={
+                    "User-Agent": (
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                        "AppleWebKit/537.36 (KHTML, like Gecko) "
+                        "Chrome/122.0.0.0 Safari/537.36"
+                    )
+                },
             ) as response:
                 if response.status > 399:
                     print(f"Error: HTTP {response.status} for {url}")
@@ -191,6 +198,48 @@ class AsyncCrawler:
         except Exception as e:
             print(f"Error fetching {url}: {e}")
             return None
+
+    async def crawl_table_pages(self):
+        offset = 0
+        seen_signatures = set()
+
+        while len(self.page_data) < self.max_pages:
+            if offset == 0:
+                page_url = self.base_url
+            else:
+                page_url = f"{self.base_url}?;offset={offset};order=ident;sort=ASC"
+
+            print(f"Crawling table page: {page_url}")
+
+            html = await self.get_html(page_url)
+            if html is None:
+                break
+
+            page_info = extract_flight_table(html, page_url)
+            rows = page_info.get("table_rows", [])
+
+            print(f"Extracted {len(rows)} rows from {page_url}")
+
+            if not rows:
+                print(page_info.get("error", "No rows found."))
+                break
+
+            signature = tuple(tuple(sorted(r.items())) for r in rows)
+            if signature in seen_signatures:
+                print("Detected repeated page data. Stopping pagination.")
+                break
+            seen_signatures.add(signature)
+
+            normalized_url = normalize_url(page_url)
+            self.page_data[normalized_url] = page_info
+
+            if len(rows) < 20:
+                print("Last page detected.")
+                break
+
+            offset += 20
+
+        return self.page_data
 
     async def crawl_page(self, current_url):
         if self.should_stop:
@@ -223,9 +272,6 @@ class AsyncCrawler:
             async with self.lock:
                 self.page_data[normalized_url] = page_info
 
-            if self.extract_mode == "table":
-                return
-
             next_urls = get_urls_from_html(html, self.base_url)
 
         if self.should_stop:
@@ -245,6 +291,9 @@ class AsyncCrawler:
                     self.all_tasks.discard(task)
 
     async def crawl(self):
+        if self.extract_mode == "table":
+            return await self.crawl_table_pages()
+
         await self.crawl_page(self.base_url)
         return self.page_data
 
