@@ -61,73 +61,7 @@ def get_images_from_html(html, base_url):
     return image_urls
 
 
-def extract_flight_table(html, page_url):
-    soup = BeautifulSoup(html, "html.parser")
-
-    table = soup.find("table", class_="prettyTable")
-    if not table:
-        return {
-            "url": page_url,
-            "table_headers": [],
-            "table_rows": [],
-            "row_count": 0,
-            "error": "Flight table with class 'prettyTable' not found",
-        }
-
-    thead = table.find("thead")
-    if not thead:
-        return {
-            "url": page_url,
-            "table_headers": [],
-            "table_rows": [],
-            "row_count": 0,
-            "error": "Table header section not found",
-        }
-
-    header_rows = thead.find_all("tr")
-    if len(header_rows) < 2:
-        return {
-            "url": page_url,
-            "table_headers": [],
-            "table_rows": [],
-            "row_count": 0,
-            "error": "Expected header row not found",
-        }
-
-    column_header_row = header_rows[1]
-    header_cells = column_header_row.find_all("th")
-    headers = [cell.get_text(" ", strip=True).replace("Estimated Arrival Time", "Estimated Arrival Time")
-               for cell in header_cells]
-
-    rows = []
-    body_rows = table.find_all("tr")
-
-    # skip the 2 thead rows
-    for tr in body_rows[2:]:
-        cells = tr.find_all("td")
-        if not cells:
-            continue
-
-        values = [cell.get_text(" ", strip=True) for cell in cells]
-
-        if len(values) != len(headers):
-            continue
-
-        row = dict(zip(headers, values))
-        rows.append(row)
-
-    return {
-        "url": page_url,
-        "table_headers": headers,
-        "table_rows": rows,
-        "row_count": len(rows),
-    }
-
-
-def extract_page_data(html, page_url, extract_mode="page"):
-    if extract_mode == "table":
-        return extract_flight_table(html, page_url)
-
+def extract_page_data(html, page_url):
     return {
         "url": page_url,
         "heading": get_heading_from_html(html),
@@ -138,7 +72,7 @@ def extract_page_data(html, page_url, extract_mode="page"):
 
 
 class AsyncCrawler:
-    def __init__(self, base_url, max_concurrency, max_pages, extract_mode="page"):
+    def __init__(self, base_url, max_concurrency, max_pages):
         self.base_url = base_url
         self.base_domain = urlparse(base_url).netloc
         self.page_data = {}
@@ -149,7 +83,6 @@ class AsyncCrawler:
         self.session = None
         self.should_stop = False
         self.all_tasks = set()
-        self.extract_mode = extract_mode
 
     async def __aenter__(self):
         self.session = aiohttp.ClientSession()
@@ -214,17 +147,9 @@ class AsyncCrawler:
             if html is None:
                 return
 
-            page_info = extract_page_data(
-                html,
-                current_url,
-                extract_mode=self.extract_mode,
-            )
-
+            page_info = extract_page_data(html, current_url)
             async with self.lock:
                 self.page_data[normalized_url] = page_info
-
-            if self.extract_mode == "table":
-                return
 
             next_urls = get_urls_from_html(html, self.base_url)
 
@@ -249,11 +174,6 @@ class AsyncCrawler:
         return self.page_data
 
 
-async def crawl_site_async(base_url, max_concurrency, max_pages, extract_mode="page"):
-    async with AsyncCrawler(
-        base_url,
-        max_concurrency,
-        max_pages,
-        extract_mode=extract_mode,
-    ) as crawler:
+async def crawl_site_async(base_url, max_concurrency, max_pages):
+    async with AsyncCrawler(base_url, max_concurrency, max_pages) as crawler:
         return await crawler.crawl()
