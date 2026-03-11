@@ -3,6 +3,12 @@ import asyncio
 from crawl import crawl_site_async
 from json_report import write_json_report
 
+# Optional import so original code does not break
+try:
+    from transform import json_to_dataframe, dataframe_to_csv
+except ImportError:
+    json_to_dataframe = None
+    dataframe_to_csv = None
 
 async def main():
     args = sys.argv
