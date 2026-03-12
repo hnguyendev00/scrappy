@@ -209,7 +209,7 @@ def main():
                 st.error(f"Pipeline failed: {e}")
 
     if reload_data:
-        st.rerun()
+        pass
 
     if st.session_state.last_refresh:
         st.info(f"Last refresh: {st.session_state.last_refresh}")
