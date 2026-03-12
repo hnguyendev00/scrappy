@@ -9,10 +9,40 @@ from crawl import crawl_site_async
 from json_report import write_json_report
 from json_to_sqlite import json_report_to_sqlite
 
-
 DB_FILE = "flights.db"
 TABLE_NAME = "delta_flights"
 REPORT_FILE = "report.json"
+
+
+def make_streamlit_safe(df: pd.DataFrame) -> pd.DataFrame:
+    """
+    Convert DataFrame columns into plain pandas/Python-friendly dtypes
+    so Streamlit does not choke on Arrow LargeUtf8 / extension dtypes.
+    """
+    safe_df = df.copy()
+
+    for col in safe_df.columns:
+        series = safe_df[col]
+
+        if pd.api.types.is_datetime64_any_dtype(series):
+            safe_df[col] = pd.to_datetime(series, errors="coerce")
+            continue
+
+        if pd.api.types.is_integer_dtype(series):
+            safe_df[col] = pd.to_numeric(series, errors="coerce").astype("Int64")
+            continue
+
+        if pd.api.types.is_float_dtype(series):
+            safe_df[col] = pd.to_numeric(series, errors="coerce")
+            continue
+
+        if pd.api.types.is_bool_dtype(series):
+            safe_df[col] = series.astype("boolean")
+            continue
+
+        safe_df[col] = series.where(series.notna(), "").map(str).astype(object)
+
+    return safe_df
 
 
 def load_data() -> pd.DataFrame:
@@ -25,6 +55,7 @@ def load_data() -> pd.DataFrame:
             return df
 
         return make_streamlit_safe(df)
+
     except Exception as e:
         st.error(f"Failed to load data from SQLite: {e}")
         return pd.DataFrame()
@@ -39,9 +70,32 @@ def run_pipeline(base_url: str, max_concurrency: int, max_pages: int):
             extract_mode="table",
         )
     )
+
+    if page_data is None:
+        raise ValueError("crawl_site_async returned None")
+
+    write_json_report(page_data, filename=REPORT_FILE)
+
+    result = json_report_to_sqlite(
+        json_file=REPORT_FILE,
+        db_file=DB_FILE,
+        table_name=TABLE_NAME,
+    )
+
+    if result is None:
+        raise ValueError("json_report_to_sqlite returned None")
+
+    df, row_count = result
+
+    if not df.empty:
+        df = make_streamlit_safe(df)
+
+    return df, row_count
+
+
 def search_dataframe(df: pd.DataFrame, query: str) -> pd.DataFrame:
     if not query or not query.strip():
-        return df
+        return df.iloc[0:0]
 
     query = query.strip().lower()
 
@@ -52,59 +106,11 @@ def search_dataframe(df: pd.DataFrame, query: str) -> pd.DataFrame:
 
     return df[mask]
 
-    write_json_report(page_data, filename=REPORT_FILE)
-
-    df, row_count = json_report_to_sqlite(
-        json_file=REPORT_FILE,
-        db_file=DB_FILE,
-        table_name=TABLE_NAME,
-    )
-
-    if not df.empty:
-        df = make_streamlit_safe(df)
-
-    return df, row_count
-
-
-def make_streamlit_safe(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Convert DataFrame columns into plain pandas/Python-friendly dtypes
-    so Streamlit does not choke on Arrow LargeUtf8 / extension dtypes.
-    """
-    safe_df = df.copy()
-
-    for col in safe_df.columns:
-        series = safe_df[col]
-
-        # Datetime columns
-        if pd.api.types.is_datetime64_any_dtype(series):
-            safe_df[col] = pd.to_datetime(series, errors="coerce")
-            continue
-
-        # Numeric columns
-        if pd.api.types.is_integer_dtype(series):
-            safe_df[col] = pd.to_numeric(series, errors="coerce").astype("Int64")
-            continue
-
-        if pd.api.types.is_float_dtype(series):
-            safe_df[col] = pd.to_numeric(series, errors="coerce")
-            continue
-
-        if pd.api.types.is_bool_dtype(series):
-            safe_df[col] = series.astype("boolean")
-            continue
-
-        # Everything else becomes plain Python string/object
-        safe_df[col] = series.where(series.notna(), "").map(str).astype(object)
-
-    return safe_df
-
 
 def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     filtered_df = df.copy()
 
     st.subheader("Filters")
-
     col1, col2, col3 = st.columns(3)
 
     selected_origin = "None"
@@ -112,7 +118,6 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     selected_type = "None"
 
     with col1:
-        selected_origin = "None"
         if "origin" in filtered_df.columns:
             options = ["None"] + sorted(
                 filtered_df["origin"]
@@ -125,7 +130,6 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
             selected_origin = st.selectbox("Origin", options, index=0)
 
     with col2:
-        selected_destination = "None"
         if "destination" in filtered_df.columns:
             options = ["None"] + sorted(
                 filtered_df["destination"]
@@ -138,7 +142,6 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
             selected_destination = st.selectbox("Destination", options, index=0)
 
     with col3:
-        selected_type = "None"
         if "type" in filtered_df.columns:
             options = ["None"] + sorted(
                 filtered_df["type"]
@@ -149,13 +152,16 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
                 .tolist()
             )
             selected_type = st.selectbox("Aircraft Type", options, index=0)
-    
+
     no_filters_selected = (
         selected_origin == "None"
         and selected_destination == "None"
         and selected_type == "None"
     )
-    
+
+    if no_filters_selected:
+        return df.iloc[0:0]
+
     if selected_origin != "None" and "origin" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["origin"] == selected_origin]
 
@@ -230,10 +236,11 @@ def main():
                 st.session_state.last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 st.success(f"Refresh complete. Loaded {row_count} rows.")
             except Exception as e:
-                st.error(f"Pipeline failed: {e}")
+                st.exception(e)
 
     if reload_data:
-        pass
+        st.session_state.last_refresh = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        st.success("Dashboard reloaded.")
 
     if st.session_state.last_refresh:
         st.info(f"Last refresh: {st.session_state.last_refresh}")
@@ -244,14 +251,20 @@ def main():
         st.warning("No data found in the database yet. Run the crawler from the sidebar.")
         return
 
-    show_metrics(df)
+    with st.expander("Show All Flights", expanded=False):
+        st.dataframe(df, use_container_width=True)
     
+    show_metrics(df)
+
     filtered_df = apply_filters(df)
 
-    with st.expander("Filtered Flights"):
-        st.dataframe(filtered_df, use_container_width=True)
+    with st.expander(f"Filtered Flights", expanded=False):
+        if filtered_df.empty:
+            st.write("Showing 0 rows. Select a filter to begin.")
+        else:
+            st.dataframe(filtered_df, use_container_width=True)
 
-    st.subheader("Search Flights")
+    st.subheader("Search")
     search_query = st.text_input(
         "Search across all columns",
         placeholder="Try flight number, airport, city, route, aircraft type...",
@@ -262,9 +275,13 @@ def main():
     if search_query.strip():
         st.write(f"Showing {len(search_results)} matching rows.")
     else:
-        st.write(f"Showing all {len(df)} rows.")
-    with st.expander("Results"):
-        st.dataframe(search_results, use_container_width=True)
+        st.write("Showing 0 rows. Enter a search term.")
+
+    st.subheader("Results")
+    st.dataframe(search_results, use_container_width=True)
+
+
+
 
 if __name__ == "__main__":
     main()
