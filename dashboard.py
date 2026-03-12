@@ -193,7 +193,7 @@ def show_metrics(df: pd.DataFrame) -> None:
 def main():
     st.set_page_config(page_title="Flight Monitor", layout="wide")
     st.title("Flight Monitor")
-    st.caption("Delta Flight Dashboard")
+    st.caption("A simple flight dashboard")
 
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = None
