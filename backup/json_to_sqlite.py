@@ -31,43 +31,19 @@ def build_dataframe(rows):
     return df
 
 
-def write_dataframe_to_sqlite(
-    df,
-    db_file="flights.db",
-    table_name="delta_flights",
-    if_exists="replace",
-):
-    if df.empty:
-        return 0
-
-    conn = sqlite3.connect(db_file)
-    df.to_sql(table_name, conn, if_exists=if_exists, index=False)
-    conn.close()
-    return len(df)
-
-
-def json_report_to_sqlite(
-    json_file="report.json",
-    db_file="flights.db",
-    table_name="delta_flights",
-):
-    rows = extract_rows_from_report(json_file)
+def main():
+    rows = extract_rows_from_report("report.json")
     df = build_dataframe(rows)
 
-    if df.empty:
-        return df, 0
-
-    row_count = write_dataframe_to_sqlite(df, db_file=db_file, table_name=table_name)
-    return df, row_count
-
-
-def main():
-    df, row_count = json_report_to_sqlite()
     if df.empty:
         print("No table rows found in report.json")
         return
 
-    print(f"Loaded {row_count} rows into flights.db -> delta_flights")
+    conn = sqlite3.connect("flights.db")
+    df.to_sql("delta_flights", conn, if_exists="replace", index=False)
+    conn.close()
+
+    print(f"Loaded {len(df)} rows into flights.db -> delta_flights")
 
 
 if __name__ == "__main__":

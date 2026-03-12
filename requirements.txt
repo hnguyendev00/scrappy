@@ -1,0 +1,6 @@
+astreamlit
+pandas
+aiohttp
+beautifulsoup4
+lxml
+matplotlib

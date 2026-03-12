@@ -36,14 +36,12 @@ def get_urls_from_html(html, base_url):
     anchors = soup.find_all("a")
 
     for anchor in anchors:
-        href = anchor.get("href")
-        if not href:
-            continue
-        try:
-            absolute_url = urljoin(base_url, href)
-            urls.append(absolute_url)
-        except Exception as e:
-            print(f"{str(e)}: {href}")
+        if href := anchor.get("href"):
+            try:
+                absolute_url = urljoin(base_url, href)
+                urls.append(absolute_url)
+            except Exception as e:
+                print(f"{str(e)}: {href}")
 
     return urls
 
@@ -54,14 +52,12 @@ def get_images_from_html(html, base_url):
     images = soup.find_all("img")
 
     for img in images:
-        src = img.get("src")
-        if not src:
-            continue
-        try:
-            absolute_url = urljoin(base_url, src)
-            image_urls.append(absolute_url)
-        except Exception as e:
-            print(f"{str(e)}: {src}")
+        if src := img.get("src"):
+            try:
+                absolute_url = urljoin(base_url, src)
+                image_urls.append(absolute_url)
+            except Exception as e:
+                print(f"{str(e)}: {src}")
 
     return image_urls
 
@@ -267,7 +263,12 @@ class AsyncCrawler:
             if html is None:
                 return
 
-            page_info = extract_page_data(html, current_url, self.extract_mode)
+            page_info = extract_page_data(
+                html,
+                current_url,
+                extract_mode=self.extract_mode,
+            )
+
             async with self.lock:
                 self.page_data[normalized_url] = page_info
 
