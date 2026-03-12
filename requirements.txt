@@ -1,4 +1,4 @@
-astreamlit
+streamlit
 pandas
 aiohttp
 beautifulsoup4
