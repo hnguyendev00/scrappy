@@ -9,6 +9,7 @@ from crawl import crawl_site_async
 from json_report import write_json_report
 from json_to_sqlite import json_report_to_sqlite
 
+
 DB_FILE = "flights.db"
 TABLE_NAME = "delta_flights"
 REPORT_FILE = "report.json"
@@ -38,6 +39,18 @@ def run_pipeline(base_url: str, max_concurrency: int, max_pages: int):
             extract_mode="table",
         )
     )
+def search_dataframe(df: pd.DataFrame, query: str) -> pd.DataFrame:
+    if not query or not query.strip():
+        return df
+
+    query = query.strip().lower()
+
+    mask = df.apply(
+        lambda row: row.astype(str).str.lower().str.contains(query, na=False).any(),
+        axis=1,
+    )
+
+    return df[mask]
 
     write_json_report(page_data, filename=REPORT_FILE)
 
@@ -91,12 +104,17 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
     filtered_df = df.copy()
 
     st.subheader("Filters")
+
     col1, col2, col3 = st.columns(3)
 
+    selected_origin = "None"
+    selected_destination = "None"
+    selected_type = "None"
+
     with col1:
-        selected_origin = "All"
+        selected_origin = "None"
         if "origin" in filtered_df.columns:
-            options = ["All"] + sorted(
+            options = ["None"] + sorted(
                 filtered_df["origin"]
                 .replace("", pd.NA)
                 .dropna()
@@ -104,12 +122,12 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
                 .unique()
                 .tolist()
             )
-            selected_origin = st.selectbox("Origin", options)
+            selected_origin = st.selectbox("Origin", options, index=0)
 
     with col2:
-        selected_destination = "All"
+        selected_destination = "None"
         if "destination" in filtered_df.columns:
-            options = ["All"] + sorted(
+            options = ["None"] + sorted(
                 filtered_df["destination"]
                 .replace("", pd.NA)
                 .dropna()
@@ -117,12 +135,12 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
                 .unique()
                 .tolist()
             )
-            selected_destination = st.selectbox("Destination", options)
+            selected_destination = st.selectbox("Destination", options, index=0)
 
     with col3:
-        selected_type = "All"
+        selected_type = "None"
         if "type" in filtered_df.columns:
-            options = ["All"] + sorted(
+            options = ["None"] + sorted(
                 filtered_df["type"]
                 .replace("", pd.NA)
                 .dropna()
@@ -130,15 +148,21 @@ def apply_filters(df: pd.DataFrame) -> pd.DataFrame:
                 .unique()
                 .tolist()
             )
-            selected_type = st.selectbox("Aircraft Type", options)
-
-    if selected_origin != "All" and "origin" in filtered_df.columns:
+            selected_type = st.selectbox("Aircraft Type", options, index=0)
+    
+    no_filters_selected = (
+        selected_origin == "None"
+        and selected_destination == "None"
+        and selected_type == "None"
+    )
+    
+    if selected_origin != "None" and "origin" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["origin"] == selected_origin]
 
-    if selected_destination != "All" and "destination" in filtered_df.columns:
+    if selected_destination != "None" and "destination" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["destination"] == selected_destination]
 
-    if selected_type != "All" and "type" in filtered_df.columns:
+    if selected_type != "None" and "type" in filtered_df.columns:
         filtered_df = filtered_df[filtered_df["type"] == selected_type]
 
     return filtered_df
@@ -163,13 +187,13 @@ def show_metrics(df: pd.DataFrame) -> None:
 def main():
     st.set_page_config(page_title="Flight Monitor", layout="wide")
     st.title("Flight Monitor")
-    st.caption("Crawler → JSON → SQLite → Streamlit")
+    st.caption("Delta Flight Dashboard")
 
     if "last_refresh" not in st.session_state:
         st.session_state.last_refresh = None
 
     with st.sidebar:
-        st.header("Dashboard")
+        st.header("Menu")
 
         base_url = st.text_input(
             "Base URL",
@@ -221,15 +245,26 @@ def main():
         return
 
     show_metrics(df)
-
+    
     filtered_df = apply_filters(df)
 
-    st.subheader("Filtered Flights")
-    st.dataframe(filtered_df, use_container_width=True)
+    with st.expander("Filtered Flights"):
+        st.dataframe(filtered_df, use_container_width=True)
 
-    st.subheader("Raw Data")
-    st.dataframe(df, use_container_width=True)
+    st.subheader("Search Flights")
+    search_query = st.text_input(
+        "Search across all columns",
+        placeholder="Try flight number, airport, city, route, aircraft type...",
+    )
 
+    search_results = search_dataframe(df, search_query)
+
+    if search_query.strip():
+        st.write(f"Showing {len(search_results)} matching rows.")
+    else:
+        st.write(f"Showing all {len(df)} rows.")
+    with st.expander("Results"):
+        st.dataframe(search_results, use_container_width=True)
 
 if __name__ == "__main__":
     main()
